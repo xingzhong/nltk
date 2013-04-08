@@ -1026,6 +1026,30 @@ class WeightedGrammar(ContextFreeGrammar):
                     (1+WeightedGrammar.EPSILON)):
                 raise ValueError("Productions for %r do not sum to 1" % lhs)
 
+class ContinuousWeightedGrammar(WeightedGrammar):
+  import numpy as np
+  import itertools
+  def __init__(self, emission, density, *args, **kwargs):
+    WeightedGrammar.__init__(self, *args, **kwargs)
+    self._emission = emission
+    self._density = density
+  def emission(self):
+    return self._emission
+  def density(self):
+    return self._density
+  def sampler(self, n=20):
+    return itertools.islice( self.sampling(), n)
+  def sampling(self, item=None):
+    if not item:
+      item = self.start()
+    prods = self.productions(lhs = item)
+    if len(prods)>0:
+      choose = np.random.choice(prods, 1, p=[x.prob() for x in prods])[0]
+      for rhs in choose.rhs():
+        for s in self.sampling (item=rhs):
+          yield s
+    else:
+      yield (item, self._emission[item](1))
 
 #################################################################
 # Inducing Grammars
@@ -1107,6 +1131,10 @@ def parse_pcfg(input, encoding=None):
     start, productions = parse_grammar(input, standard_nonterm_parser,
                                        probabilistic=True, encoding=encoding)
     return WeightedGrammar(start, productions)
+
+def parse_cpcfg(input, emission, density,  encoding=None):
+  start , production = parse_grammar(input, standard_nonterm_parser,probabilistic=True)
+  return ContinuousWeightedGrammar(emission,density, start, production)
 
 # Parsing Feature-based CFGs
 

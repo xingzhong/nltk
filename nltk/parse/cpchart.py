@@ -193,6 +193,84 @@ class CInsideChartParser(InsideChartParser):
 
     return parses[:n]
 
+class CInsideOutsideChartParser(CInsideChartParser):
+  def nbest_parse(self, tokens, n=None):
+    chart = Chart(list(tokens))
+    grammar = self._grammar
+    
+    bu_init = CProbabilisticBottomUpInitRule()
+    bu = CProbabilisticBottomUpPredictRule()
+    fr = CSingleEdgeProbabilisticFundamentalRule()
+    em = CProbabilisticEmissionRule()
+
+    queue = []
+    for edge in bu_init.apply_iter(chart, grammar):
+      if self._trace > 1:
+        print('  %-50s [%s]' % (chart.pp_edge(edge,width=2),edge.logprob()))
+      queue.append(edge)
+
+    while len(queue) > 0:
+      self.sort_queue(queue, chart)
+      if self.beam_size:
+        self._prune(queue, chart)
+      edge = queue.pop()
+      if self._trace > 0:
+        print('  %-50s [%s]' % (chart.pp_edge(edge,width=2),edge.logprob()))
+
+      queue.extend(em.apply(chart, grammar, edge))
+      queue.extend(bu.apply(chart, grammar, edge))
+      queue.extend(fr.apply(chart, grammar, edge))
+
+    # construct the pre-requirement
+    import pprint
+    A = {}
+    B = {}
+    C = {}
+    e = {}
+    f = {}
+    for prod in grammar.productions() :
+      print (prod.lhs(), prod.rhs())
+      if len(prod.rhs())> 1 :
+        A[(prod.lhs(), prod.rhs()[0], prod.rhs()[1])] = prod.logprob()
+      else:
+        B[(prod.lhs(), prod.rhs()[0])] = prod.logprob()
+    for o in tokens:
+      for key, em in grammar.density().iteritems():
+        C[(key, o)] = em(o)
+    print (A)
+    print (B)
+    print (C)
+    for s, o in enumerate(tokens):
+      for key, item in B.iteritems():
+        e[(s,s,key[0])] = item+C.get( (key[1],o) )
+    for s in range(len(tokens)-1):
+      for key, item in A.iteritems():
+        print (s, s+1, key, item, e.get((s, s, key[1])), e.get((s+1, s+1, key[2])))
+        if (item and e.get((s,s,key[1])) and e.get((s+1,s+1,key[2]))):
+          e[(s, s+1, key[0])] = item + e.get((s, s, key[1]))+e.get((s+1, s+1, key[2]))
+    
+    for dt in range(len(tokens)):
+      for s in range(len(tokens)):
+        t = s + dt
+        if t>s and t<len(tokens):
+          for key, item in A.iteritems():
+            sumr = 0
+            flag = None
+            for r in range(s, t):
+              print (s, t, r, key, item, e.get((s, r, key[1])), e.get((r+1, t, key[2])) )
+              try:
+                sumr = sumr + item + e.get((s,r,key[1])) + e.get((r+1, t, key[2]))
+                print ("\te(%s,%s,%s)=%s"%(s,t,key[0],sumr ))
+                flag = 1
+              except TypeError:
+                print ("have None ")
+                pass
+            if flag:
+              e[(s,t,key[0])] = sumr
+              print ("e(%s,%s,%s)=%s"%(s,t,key[0],sumr))
+
+    pprint.pprint (e)
+    pprint.pprint (f)
 
 def demo(choice=None, draw_parses=None, print_parses=None):
     """
@@ -207,23 +285,24 @@ def demo(choice=None, draw_parses=None, print_parses=None):
     densityEmission = {
         Nonterminal('s1') : lambda x: norm.logpdf(x, loc=0, scale=1),
         Nonterminal('s2') : lambda x: norm.logpdf(x, loc=20, scale=1),
-        Nonterminal('s3') : lambda x: norm.logpdf(x, loc=-20, scale=1),
+        #Nonterminal('s3') : lambda x: norm.logpdf(x, loc=-20, scale=1),
     }
     emission = {
         Nonterminal('s1') : lambda x: norm.rvs(loc=0, scale=1, size=x),
         Nonterminal('s2') : lambda x: norm.rvs(loc=20, scale=1, size=x),
-        Nonterminal('s3') : lambda x: norm.rvs(loc=-20, scale=1, size=x),
+        #Nonterminal('s3') : lambda x: norm.rvs(loc=-20, scale=1, size=x),
     }
     g = parse_cpcfg("""
-      S -> S1 [0.6] | S2 [0.3]| S3 [0.1]
-      S1 -> s1 S1 [0.7] | S1 S2 [0.2] | S1 S3[0.0999] | s1 [0.0001]
-      S2 -> S2 S1 [0.7] | s2 S2 [0.2] | S2 S3[0.0999] | s2 [0.0001]
-      S3 -> S3 S1 [0.7] | S3 S2 [0.2] | s3 S3[0.0999] | s3 [0.0001]
+      S0 -> S A [1.0]
+      S -> A B [1.0]
+      A -> A A [0.5] | s1 [0.5]
+      B -> s2 [1.0]
       """, emission, densityEmission)
 
-    parser = CInsideChartParser(g)
-    parser.trace(1)
-    parses = parser.nbest_parse([0,0,20,0,-20])
+    #parser = CInsideChartParser(g)
+    parser = CInsideOutsideChartParser(g)
+    parser.trace(0)
+    parses = parser.nbest_parse([0,0,20,0,0], n=1)
     for p in parses:
       print(p)
 
